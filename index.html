@@ -1,17 +1,187 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Wearthko</title>
-  <link rel="stylesheet" href="style.css">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.min.js"></script>
-  <script src="https://unpkg.com/color-thief-browser/dist/color-thief.umd.js"></script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Wearthko Gradient Viewer</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    body {
+      font-family: sans-serif;
+      text-align: center;
+      background: #f9f9f9;
+      margin: 0;
+      padding: 2em;
+    }
+
+    canvas {
+      display: block;
+      margin: 2em auto;
+      border: 1px solid #ccc;
+      box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+      max-width: 100%;
+      height: auto;
+    }
+
+    #paletteControls input {
+      margin: 0 5px;
+    }
+  </style>
 </head>
 <body>
   <h1>Wearthko</h1>
-  <input type="file" id="imageUploader">
-  <div id="canvas-container"></div>
-  <img id="sourceImage" hidden>
-  <script src="sketch.js"></script>
+  <input type="file" id="imageUpload" accept="image/*" />
+  <div id="paletteControls"></div>
+  <button id="togglePainterly">Rothkoify</button>
+  <canvas id="canvasOutput" width="600" height="800"></canvas>
+
+  <!-- Libraries -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/color-thief/2.3.2/color-thief.umd.js"></script>
+
+  <!-- Drawing Script -->
+  <script>
+    const canvas = document.getElementById('canvasOutput');
+    const ctx = canvas.getContext('2d');
+    const uploader = document.getElementById('imageUpload');
+    const toggleButton = document.getElementById('togglePainterly');
+    let painterlyMode = false;
+
+    uploader.addEventListener('change', handleImageUpload);
+    toggleButton.addEventListener('click', () => {
+      painterlyMode = !painterlyMode;
+      // Re-draw gradient with or without painterly effects on toggle
+      if (currentPalette) drawGradient(currentPalette);
+    });
+
+    let currentPalette = null;
+
+    function handleImageUpload(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+
+      const imgElement = new Image();
+      imgElement.crossOrigin = "Anonymous";
+
+      imgElement.onload = () => {
+        const tempCanvas = document.createElement('canvas');
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCanvas.width = imgElement.width;
+        tempCanvas.height = imgElement.height;
+        tempCtx.drawImage(imgElement, 0, 0);
+
+        try {
+          const offscreenImg = document.createElement('img');
+          offscreenImg.src = tempCanvas.toDataURL();
+
+          offscreenImg.onload = () => {
+            const colorThief = new ColorThief();
+            const palette = colorThief.getPalette(offscreenImg, 5);
+            currentPalette = palette;
+            drawPaletteEditor(palette);
+            drawGradient(palette);
+          };
+        } catch (err) {
+          console.error('Color extraction failed:', err);
+        }
+      };
+
+      imgElement.src = URL.createObjectURL(file);
+    }
+
+    function drawPaletteEditor(palette) {
+      const container = document.getElementById("paletteControls");
+      container.innerHTML = '';
+      palette.forEach((color, index) => {
+        const input = document.createElement("input");
+        input.type = "color";
+        input.value = rgbToHex(color);
+        input.addEventListener("input", () => {
+          const newColor = hexToRgb(input.value);
+          palette[index] = newColor;
+          drawGradient(palette);
+        });
+        container.appendChild(input);
+      });
+    }
+
+    function rgbToHex([r, g, b]) {
+      return "#" + [r, g, b].map(x => x.toString(16).padStart(2, '0')).join('');
+    }
+
+    function hexToRgb(hex) {
+      const bigint = parseInt(hex.slice(1), 16);
+      return [(bigint >> 16) & 255, (bigint >> 8) & 255, bigint & 255];
+    }
+
+    function drawGradient(colors) {
+      const height = canvas.height;
+      const width = canvas.width;
+      const bandHeight = height / (colors.length - 1);
+      ctx.clearRect(0, 0, width, height);
+
+      for (let i = 0; i < colors.length - 1; i++) {
+        const c1 = colors[i];
+        const c2 = colors[i + 1];
+
+        for (let y = 0; y < bandHeight; y++) {
+          const t = y / bandHeight;
+          const r = Math.round(c1[0] + t * (c2[0] - c1[0]));
+          const g = Math.round(c1[1] + t * (c2[1] - c1[1]));
+          const b = Math.round(c1[2] + t * (c2[2] - c1[2]));
+
+          ctx.fillStyle = `rgb(${r}, ${g}, ${b})`;
+          ctx.fillRect(0, i * bandHeight + y, width, 1);
+
+          // Painterly: add subtle brush blobs with random opacity & position
+          if (painterlyMode && Math.random() < 0.2) {
+            ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${Math.random() * 0.15})`;
+            const x = Math.random() * width;
+            const radius = Math.random() * 3 + 1;
+            ctx.beginPath();
+            ctx.arc(x, i * bandHeight + y, radius, 0, 2 * Math.PI);
+            ctx.fill();
+          }
+        }
+      }
+
+      if (painterlyMode) {
+        addCanvasTexture();
+        addFeatheredEdges(colors);
+      }
+    }
+
+    function addFeatheredEdges(colors) {
+      const width = canvas.width;
+      const bandHeight = canvas.height / (colors.length - 1);
+
+      for (let i = 1; i < colors.length - 1; i++) {
+        const edgeY = i * bandHeight;
+        const fadeSize = 10;
+
+        for (let y = -fadeSize; y <= fadeSize; y++) {
+          const t = (y + fadeSize) / (2 * fadeSize);
+          const c1 = colors[i - 1];
+          const c2 = colors[i];
+          const r = Math.round(c1[0] * (1 - t) + c2[0] * t);
+          const g = Math.round(c1[1] * (1 - t) + c2[1] * t);
+          const b = Math.round(c1[2] * (1 - t) + c2[2] * t);
+
+          ctx.fillStyle = `rgba(${r}, ${g}, ${b}, ${0.15 * (1 - Math.abs(y / fadeSize))})`;
+          ctx.fillRect(0, edgeY + y, width, 1);
+        }
+      }
+    }
+
+    function addCanvasTexture() {
+      const texture = new Image();
+      texture.crossOrigin = "anonymous";
+      texture.src = 'https://www.transparenttextures.com/patterns/canvas-fibers.png';
+      texture.onload = () => {
+        ctx.globalAlpha = 0.15;
+        ctx.drawImage(texture, 0, 0, canvas.width, canvas.height);
+        ctx.globalAlpha = 1.0;
+      };
+    }
+  </script>
 </body>
 </html>
